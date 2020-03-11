@@ -1,0 +1,297 @@
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>CPSC 314 Assignment 5 Sep 2019</title>
+    <style>
+      body { margin: 0; } canvas {width: 100%;
+      height: 100% }
+    </style>
+  </head>
+  <body>
+    <div id="canvas"></div>
+<!--    <script src="js/three.js"></script> -->
+    <script src="js/three.min.js"></script>
+    <script src="js/OBJLoader.js"></script>
+    <script src="js/SourceLoader.js"></script>
+    <script src="js/OrbitControls.js"></script>
+    <script src="js/KeyboardState.js"></script> <!-- By Jerome Etienne: http://jetienne.com/ -->
+
+<script id="floorVertShader" type="x-shader/x-vertex">
+uniform vec2 uvScale;
+varying vec2 vUv;
+varying vec3 vcsNormal;
+varying vec3 ocsPosition;
+varying vec3 vcsPosition;
+void main()
+{
+  vUv = uv;
+  ocsPosition = position;
+  vec4 vcsP = modelViewMatrix * vec4(ocsPosition,1.0);
+  vcsPosition = vcsP.xyz;
+  gl_Position = projectionMatrix * vcsP;   // pass on point in CCS
+  vcsNormal = normalMatrix * normal;       // normalMatrix is the transpose-inv of the rotation matrix
+}
+</script>
+
+<script id="myVertShader" type="x-shader/x-vertex">
+uniform vec2 uvScale;
+varying vec2 vUv;
+varying vec3 vcsNormal;
+varying vec3 ocsPosition;
+varying vec3 vcsPosition;
+void main()
+{
+  vUv = uvScale * uv;
+  ocsPosition = position;
+  vec4 vcsP = modelViewMatrix * vec4(ocsPosition,1.0);
+  vcsPosition = vcsP.xyz;
+  gl_Position = projectionMatrix * vcsP;   // pass on point in CCS
+  vcsNormal = normalMatrix * normal;       // normalMatrix is the transpose-inv of the rotation matrix
+}
+</script>
+
+<script id="skyBoxVertShader" type="x-shader/x-vertex">
+varying vec2 vUv;
+void main()
+{
+  vec4 vcsP = modelViewMatrix * vec4(position,1.0);
+  gl_Position = projectionMatrix * vcsP;   // pass on point in CCS
+  vUv = uv;
+}
+</script>
+
+<script id="holeyFragShader" type="x-shader/x-fragment">
+uniform vec3 lightPosition;
+uniform vec3 myColor;
+varying vec3 vcsNormal;
+varying vec3 vcsPosition;
+varying vec3 ocsPosition;
+
+
+void main( void ) {
+  vec3 L = normalize(lightPosition - vcsPosition);
+  vec3 N = normalize(vcsNormal);
+  float scale = 3.0; // should I be using this scale thing somewhere?
+  float R = 0.2;
+
+  float i = dot(N, L);
+  float diffuse = dot(N, L);
+  i = max(i, 0.0);
+
+
+  float dx = (scale*(ocsPosition.x)) - floor(scale*(ocsPosition.x)+0.5); 
+  float dy = (scale*(ocsPosition.y)) - floor(scale*(ocsPosition.y)+0.5); 
+  float dz = (scale*(ocsPosition.z)) - floor(scale*(ocsPosition.z)+0.5);
+  
+  //float r2 = (ocsPosition.x)*(ocsPosition.x) + (ocsPosition.y)*(ocsPosition.y) + (ocsPosition.z)*(ocsPosition.z); 
+  
+  float r2 = dx*dx + dy*dy + dz*dz;
+  float circlef = pow(R, 2.0) - r2; 
+  
+  if (circlef > 0.0) {
+     discard;
+  }
+
+  vec3 color = vec3(0,1,1);
+  gl_FragColor = vec4(i*color,1.0);
+}
+</script>
+
+<script id="toonFragShader" type="x-shader/x-fragment">
+uniform vec3 myColor;
+uniform vec3 lightPosition;
+varying vec3 vcsNormal;
+varying vec3 vcsPosition;
+
+
+void main( void ) {
+   vec3 L = normalize(lightPosition - vcsPosition);
+   vec3 N = normalize(vcsNormal);
+   float n = 10.0;
+
+   float i = dot(N, L);
+   i = max(i, 0.0);
+   float j = n * i;
+   float k = floor(j);
+   i = k / n;
+   //gl_FragColor = vec4(0.9,0.9,0.3,1.0);   // default is yellow
+   gl_FragColor = vec4(i*myColor, 1.0);
+}
+</script>
+
+
+<script id="envmapFragShader" type="x-shader/x-fragment">
+uniform vec3 lightPosition;
+uniform sampler2D uPosxTexture;
+uniform sampler2D uPosyTexture;
+uniform sampler2D uPoszTexture;
+uniform sampler2D uNegxTexture;
+uniform sampler2D uNegyTexture;
+uniform sampler2D uNegzTexture;
+uniform vec3 myColor;
+uniform mat4 matrixWorld;
+varying vec3 vcsNormal;
+varying vec3 ocsPosition;
+varying vec3 vcsPosition;
+void main( void ) {
+
+  vec4 myColor;
+  vec3 N = normalize(vcsNormal);
+  vec3 eyePosition = vec3(0.0, 0.0, 0.0);
+  vec3 I = normalize(vcsPosition - eyePosition); // Not sure if this is the correct way to compute the incident ray but...
+    
+  vec4 R = matrixWorld*vec4(reflect(I, N), 0.0);
+  
+  //+y coordinates
+  float u = 0.5*((-R.x/R.y) + 1.0);
+  float v = 0.5 *((-R.z/R.y) + 1.0);
+  vec2 posY = vec2(u, v);
+  
+  //-y coordinates
+  float x = 0.5*((R.x/R.y) + 1.0);
+  float y = 0.5 *((-R.z/R.y) + 1.0);
+  vec2 negY = vec2(x, y); 
+  
+  //+x coordinates
+  float a = 0.5 *((R.z/R.x) + 1.0);
+  float b = 0.5*((R.y/R.x) + 1.0);
+  vec2 posX = vec2(a, b);
+  
+  //-x coordinates
+  float c = 0.5*((R.z/R.x) + 1.0);
+  float d = 0.5*((-R.y/R.x) + 1.0);
+  vec2 negX = vec2(c, d);
+  
+  //+z coordinates
+  float e = 0.5*((-R.x/R.z) + 1.0); 
+  float f = 0.5*((R.y/R.z) + 1.0);
+  vec2 posZ = vec2(e, f);
+  
+  //-z coordinates
+  float g = 0.5*((-R.x/R.z) + 1.0);
+  float h = 0.5*((-R.y/R.z) + 1.0);
+  vec2 negZ = vec2(g, h);
+  
+  if (R.y >= abs(R.x) && R.y >= abs(R.z)){
+      myColor = texture2D(uPosyTexture, posY);
+  }
+  else if (R.y <= -abs(R.x) && R.y <= -abs(R.z)){
+      myColor = texture2D(uNegyTexture, negY);
+  }
+  
+  else if(R.x >=abs(R.y) && R.x >= abs(R.z)){
+      myColor = texture2D(uPosxTexture, posX);
+  }
+  
+  else if(R.x <= -abs(R.y) && R.x <= -abs(R.z)){
+      myColor = texture2D(uNegxTexture, negX);
+  }
+  
+  else if(R.z >= abs(R.x) && R.z >= abs(R.y)){
+      myColor = texture2D(uPoszTexture, posZ);
+  }
+  
+  else if(R.z <= -abs(R.x) && R.z <= -abs(R.y)){
+      myColor = texture2D(uNegzTexture, negZ);
+  }
+  
+  //vec4 myColor = texture2D(uNegyTexture, coordsNegY);
+  //vec4 myColor = texture2D(uPosyTexture, coords);
+  gl_FragColor = vec4(myColor);
+  //gl_FragColor = vec4(N,1.0);
+}
+</script>
+
+<script id="floorFragShader" type="x-shader/x-fragment">
+uniform vec3 lightPosition;
+uniform vec3 myColor;
+varying vec3 vcsPosition;
+varying vec3 ocsPosition;
+uniform sampler2D normalMap;
+uniform sampler2D textureMap;
+varying vec2 vUv;
+
+
+void main( void ) {
+vec3 L = normalize(lightPosition - vcsPosition);
+//vec3 N = normalize(vcsNormal);
+
+// How to extract the texture map normals by doing a normal-map texture lookup?
+vec3 N = texture2D(normalMap, vUv).xyz;
+
+N = (N*2.0 - 1.0);
+
+vec3 N2 = vec3(N.x, N.z, -N.y);
+
+float i = dot(N2, L);
+i = max(i, 0.0);
+
+  vec3 color = texture2D(textureMap, vUv).xyz;
+  gl_FragColor = vec4(i*color,1.0);
+}
+</script>
+
+
+<script id="pnoiseFragShader" type="x-shader/x-fragment">
+float screenWidth = 2.0;
+float PI = 3.1416;
+
+// perlin noise code from:
+//   https://gist.github.com/patriciogonzalezvivo/670c22f3966e662d2f83
+
+float rand(vec2 c){
+	return fract(sin(dot(c.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+float noise(vec2 p, float freq ){
+	float unit = screenWidth/freq;
+	vec2 ij = floor(p/unit);
+	vec2 xy = mod(p,unit)/unit;
+	//xy = 3.*xy*xy-2.*xy*xy*xy;
+	xy = .5*(1.-cos(PI*xy));
+	float a = rand((ij+vec2(0.,0.)));
+	float b = rand((ij+vec2(1.,0.)));
+	float c = rand((ij+vec2(0.,1.)));
+	float d = rand((ij+vec2(1.,1.)));
+	float x1 = mix(a, b, xy.x);
+	float x2 = mix(c, d, xy.x);
+	return mix(x1, x2, xy.y);
+}
+
+float pNoise(vec2 p, int res){
+	float persistance = .5;
+	float n = 0.;
+	float normK = 0.;
+	float f = 4.;
+	float amp = 1.;
+	int iCount = 0;
+	for (int i = 0; i<50; i++){
+		n+=amp*noise(p, f);
+		f*=2.;
+		normK+=amp;
+		amp*=persistance;
+		if (iCount == res) break;
+		iCount++;
+	}
+	float nf = n/normK;
+	return nf*nf*nf*nf;
+}
+
+varying vec3 ocsPosition;
+varying vec3 vcsPosition;
+void main( void ) {
+  int levels = 2;
+  float i=pNoise(ocsPosition.xy,levels);
+  float j = floor(i + 0.9);
+  
+  // (i) when it is vcsPosition, the noise moves with the camera/viewer. When it is ocsPosition, since the object isn't moving, the noise doesn't move either. 
+  
+  // (iii) when there are more levels the floor has a closer approximation. The lines outlining the yellow part of the floor become less smooth and more jaged.
+  
+  gl_FragColor = vec4(j, j, 0.3, 1.0);
+}
+</script>
+
+<script src="a5.js"></script>
+</body>
+</html>
